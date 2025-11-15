@@ -28,7 +28,9 @@ THE SOFTWARE.
 
 #include "disk/wd1793.h"
 
-// #pragma GCC optimize("O3")
+#pragma GCC optimize("O3")
+#pragma GCC optimize("unroll-loops")
+#pragma GCC optimize("inline-functions")
 
 //Step rates
 static const uint32_t srate[8][4]={
@@ -570,16 +572,21 @@ IRAM_ATTR void _do(rvmWD1793 *wd) {
 
     case kRVMWD177XWriteData: {
 
+      // Verificar underrun ANTES de procesar el byte
+      if(wd->control & kRVMWD177XDRQ) {
+        printf("Lost data in write - aborting command\n");
+        wd->status|=kRVMWD177XStatusLostData;
+        wd->control&=~kRVMWD177XWriting;
+        _end(wd);
+        return;
+      }
+
       wd->led = 2;
 
       wd->a=wd->data;
       // wd->crc=crc(wd->crc,wd->a);
       //printf("Write %d data: %02x CRC: %04x\n",wd->c,wd->a,wd->crc);
       wd->data=0;
-      if(wd->control & kRVMWD177XDRQ) {
-        //printf("Lost data in write\n");
-        wd->status|=kRVMWD177XStatusLostData;
-      }
 
       if(--wd->c) {
         wd->control|=kRVMWD177XDRQ;
@@ -739,7 +746,9 @@ IRAM_ATTR void _do(rvmWD1793 *wd) {
       if(wd->control & kRVMWD177XDRQ) {
         wd->status|=kRVMWD177XStatusLostData;
         _end(wd);
+        return;
       }
+
       wd->control|=kRVMWD177XWriting;
       wd->state=kRVMWD177XWriteTrack;
 
@@ -759,20 +768,29 @@ IRAM_ATTR void _do(rvmWD1793 *wd) {
         return;
       }
 
+      // Verificar underrun ANTES de procesar
+      if(wd->control & kRVMWD177XDRQ) {
+        printf("Lost data in write track - aborting command\n");
+        wd->status|=kRVMWD177XStatusLostData;
+        wd->control&=~kRVMWD177XWriting;
+        _end(wd);
+        return;
+      }
+
       wd->led = 2;
 
-      // wd->e=8;
-      if(wd->control & kRVMWD177XDRQ) {
+      // // wd->e=8;
+      // if(wd->control & kRVMWD177XDRQ) {
 
-        wd->a = 0;
-        // wd->crc=crc(wd->crc,wd->a);
-        wd->stepState=kRVMWD177XStepWriteByte;
-        wd->status|=kRVMWD177XStatusLostData;
-        wd->control|=kRVMWD177XDRQ;
+      //   wd->a = 0;
+      //   // wd->crc=crc(wd->crc,wd->a);
+      //   wd->stepState=kRVMWD177XStepWriteByte;
+      //   wd->status|=kRVMWD177XStatusLostData;
+      //   wd->control|=kRVMWD177XDRQ;
 
-        // printf("kRVMWD177XWriteTrack kRVMWD177XStatusLostData -> !! ->");
+      //   // printf("kRVMWD177XWriteTrack kRVMWD177XStatusLostData -> !! ->");
 
-      } else {
+      // } else {
 
         // if (wd->disk[wd->diskS]->indx >0 && wd->disk[wd->diskS]->indx < 32) {
         //   printf("Format byte: %02x, ",wd->a);
@@ -878,7 +896,7 @@ IRAM_ATTR void _do(rvmWD1793 *wd) {
           }
         }
 
-      }
+      // }
 
       // printf("Format byte: %02x\n",wd->a);
 
@@ -933,22 +951,22 @@ IRAM_ATTR void rvmWD1793Step(rvmWD1793 *wd, uint32_t steps) {
 
   for (;steps > 0; steps--) {
 
-    uint8_t d=0x0;
+    // uint8_t d=0x0;
     uint8_t s=0x0;
     uint8_t dd=0x0;
 
     if(wd->disk[wd->diskS]) { // If active disk exists ..
 
-      uint8_t t;
+      // uint8_t t;
       uint16_t w = 0;
 
       if((wd->control & kRVMWD177XWriting) && !wd->disk[wd->diskS]->writeprotect) {
         w |= kRVMwdDiskControlWrite | wd->wb;
       }
 
-      t = rvmwdDiskStep(wd, w);
+      /*t = */rvmwdDiskStep(wd, w);
 
-      d = t;
+      // d = t;
       dd = wd->disk[wd->diskS]->a;
       s = wd->disk[wd->diskS]->s;
 
@@ -1282,13 +1300,12 @@ void rvmWD1793Reset(rvmWD1793 *wd) {
   wd->retry = 0;
   // wd->crc=0xffff;
   wd->crc = 0; // Disable CRC. Not needed for Betadisk emulation
-  wd->side = wd->diskS = 0;
+  wd->side = 0;
+  wd->diskS = 0;
   wd->fastmode = (Config::DiskCtrl == 2 || Config::DiskCtrl == 4);
   wd->sclConverted = false;
 
 }
-
-// static char vbuf[64];
 
 bool rvmWD1793InsertDisk(rvmWD1793 *wd, unsigned char UnitNum, std::string Filename) {
 
@@ -1321,15 +1338,13 @@ bool rvmWD1793InsertDisk(rvmWD1793 *wd, unsigned char UnitNum, std::string Filen
     } else {
 
         wd->disk[UnitNum]->IsSCLFile = false;
-        wd->disk[UnitNum]->writeprotect = 0;
+        wd->disk[UnitNum]->writeprotect = 0; // Maybe I should consider that TRD files are loaded read only by default and add an option to open them read/write
         wd->disk[UnitNum]->sclDataOffset = 0;
 
         fseek(wd->disk[UnitNum]->Diskfile,2048 + 227,SEEK_SET);
         fread(&diskType,1,1,wd->disk[UnitNum]->Diskfile);
 
     }
-
-    rewind(wd->disk[UnitNum]->Diskfile);
 
     switch(diskType) {
         case 0x16:
@@ -1353,6 +1368,25 @@ bool rvmWD1793InsertDisk(rvmWD1793 *wd, unsigned char UnitNum, std::string Filen
             return false;
     }
 
+
+    // Check if we have more tracks than on a standard disk
+    if (!wd->disk[UnitNum]->IsSCLFile) {
+      // Get file size
+      fseek(wd->disk[UnitNum]->Diskfile, 0, SEEK_END);
+      long diskbytes = ftell(wd->disk[UnitNum]->Diskfile);
+      if( diskbytes > wd->disk[UnitNum]->sides * wd->disk[UnitNum]->tracks * 16 * 256 ) {
+        int i;
+        for( int i = wd->disk[UnitNum]->tracks + 1; i < 83; i++ ) {
+          if( wd->disk[UnitNum]->sides * i * 16 * 256 >= diskbytes ) {
+            wd->disk[UnitNum]->tracks = i;
+            break;
+          }
+        }
+      }
+    }
+
+    rewind(wd->disk[UnitNum]->Diskfile);
+
     wd->disk[UnitNum]->t0s1_info = 0;
     wd->disk[UnitNum]->cursectbufpos = 0xff; // 0xffff;
 
@@ -1367,21 +1401,26 @@ bool rvmWD1793InsertDisk(rvmWD1793 *wd, unsigned char UnitNum, std::string Filen
 
 }
 
-IRAM_ATTR uint8_t rvmwdDiskStep(rvmWD1793 *wd, uint32_t control) {
+IRAM_ATTR void/*uint8_t*/ rvmwdDiskStep(rvmWD1793 *wd, uint32_t control) {
 
   rvmwdDisk *disk = wd->disk[wd->diskS];
   const uint32_t seek = control & 0x300;
   disk->a = 0;
 
   // Seek forward or backward
-  if (seek) disk->t = (seek == 0x300) ? disk->t - (disk->t != 0) : disk->t + (disk->t < disk->tracks);
+  if (seek)
+    // { printf("--- Disk Seek Command ---\n");
+    // printf("Current track: %d\n", (int) disk->t);
+    disk->t = (seek == 0x300) ? disk->t - (disk->t != 0) : disk->t + (disk->t < disk->tracks);
+    // printf("New track: %d\n", (int) disk->t);
+    // printf("-------------------------\n"); }
 
   disk->s = disk->t ? 0 : kRVMwdDiskOutTrack0;
 
   if(disk->indexDelay) {
     disk->indexDelay--;
     disk->s |= kRVMwdDiskOutIndex;
-    return disk->s;
+    return/* disk->s*/;
   }
 
   if (disk->cursectbufpos < 0xff) {
@@ -1394,11 +1433,11 @@ IRAM_ATTR uint8_t rvmwdDiskStep(rvmWD1793 *wd, uint32_t control) {
       const uint8_t wr = control & 0xff;
       fwrite(&wr,1,1,disk->Diskfile);
       disk->cursectbuf[disk->cursectbufpos] = wr;
-      return 0;
+      return/* 0*/;
     }
 
     disk->a = disk->cursectbuf[disk->cursectbufpos];
-    return disk->s;
+    return/* disk->s*/;
 
   } else {
 
@@ -1406,7 +1445,7 @@ IRAM_ATTR uint8_t rvmwdDiskStep(rvmWD1793 *wd, uint32_t control) {
       disk->indx = 0xffffffff;
       disk->cursectbufpos = 0xff;
       disk->indexDelay = 25;
-      return disk->s;
+      return/* disk->s*/;
     }
 
     disk->indx++;
@@ -1465,10 +1504,10 @@ IRAM_ATTR uint8_t rvmwdDiskStep(rvmWD1793 *wd, uint32_t control) {
 
     if(control & kRVMwdDiskControlWrite) {
       disk->a = 0;
-      return 0;
+      // return 0;
     }
 
-    return disk->s;
+    // return disk->s;
 
   }
 

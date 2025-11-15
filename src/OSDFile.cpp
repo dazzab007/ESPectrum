@@ -1086,11 +1086,28 @@ reset:
                                     fclose(dirfile);
                                     dirfile = NULL;
                                     fdir.pop_back();
-                                    string prevdir = fdir.substr(fdir.find_last_of("/") + 1, fdir.length());
+                                    // string prevdir = fdir.substr(fdir.find_last_of("/") + 1, fdir.length());
                                     fdir = fdir.substr(0,fdir.find_last_of("/") + 1);
-                                    FileUtils::fileTypes[ftype].begin_row[curDirLevel] = FileUtils::fileTypes[ftype].focus[curDirLevel] = 2;
+
+                                    FileUtils::fileTypes[ftype].dirLevel--;
+                                    if (FileUtils::fileTypes[ftype].dirLevel < MAX_DIR_LEVELS - 1) curDirLevel--;
+
+                                    // Adjust begin_row & focus in case of values doesn't fit in current dialog size
+                                    if (FileUtils::fileTypes[ftype].focus[curDirLevel] > mf_rows - 1) {
+                                        FileUtils::fileTypes[ftype].begin_row[curDirLevel] += FileUtils::fileTypes[ftype].focus[curDirLevel] - (mf_rows - 1);
+                                        FileUtils::fileTypes[ftype].focus[curDirLevel] = mf_rows - 1;
+                                    } else
+                                    if (FileUtils::fileTypes[ftype].focus[curDirLevel] + (FileUtils::fileTypes[ftype].begin_row[curDirLevel] - 2) < mf_rows) {
+                                        FileUtils::fileTypes[ftype].focus[curDirLevel] += FileUtils::fileTypes[ftype].begin_row[curDirLevel] - 2;
+                                        FileUtils::fileTypes[ftype].begin_row[curDirLevel] = 2;
+                                    }
+
+                                    // FileUtils::fileTypes[ftype].begin_row[curDirLevel] = FileUtils::fileTypes[ftype].focus[curDirLevel] = 2;
+
                                     click();
+
                                     break;
+
                                 } else {
                                     if (menu_level > 0) {
                                         // Exit if we press left and we're on top of list

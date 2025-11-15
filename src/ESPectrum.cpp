@@ -887,22 +887,22 @@ void ESPectrum::setup() {
 
         FileUtils::initFileSystem();
 
-        printf("------------------------------------\n");
-        printf("LOAD SNAPSHOT BECAUSE ARCH CHANGED OR RAM FILE SET\n");
-        printf("RAM file: %s\n", Config::ram_file.c_str());
+        // printf("------------------------------------\n");
+        // printf("LOAD SNAPSHOT BECAUSE ARCH CHANGED OR RAM FILE SET\n");
+        // printf("RAM file: %s\n", Config::ram_file.c_str());
 
         int dirlev;
 
         FileUtils::SNA_Path = Config::SNA_Path;
-        printf("SNA Path: %s\n", FileUtils::SNA_Path.c_str());
+        // printf("SNA Path: %s\n", FileUtils::SNA_Path.c_str());
         dirlev = FileUtils::SNA_Path != "/" ? count(FileUtils::SNA_Path.begin(), FileUtils::SNA_Path.end(), '/') - 1 : 0;
 
-        printf("Dirlev SNA: %d\n", dirlev);
+        // printf("Dirlev SNA: %d\n", dirlev);
         FileUtils::fileTypes[DISK_SNAFILE].dirLevel = dirlev;
         for (int i=0; i < dirlev; i++) {
             FileUtils::fileTypes[DISK_SNAFILE].begin_row[i] = 2;
             FileUtils::fileTypes[DISK_SNAFILE].focus[i] = 2;
-            printf("Init SNA level %d\n", i);
+            // printf("Init SNA level %d\n", i);
         }
         FileUtils::fileTypes[DISK_SNAFILE].begin_row[dirlev] = Config::SNA_begin_row;
         FileUtils::fileTypes[DISK_SNAFILE].focus[dirlev] = Config::SNA_focus;
@@ -945,7 +945,7 @@ void ESPectrum::setup() {
         FileUtils::fileTypes[DISK_ESPFILE].fdMode = Config::ESP_fdMode;
         FileUtils::fileTypes[DISK_ESPFILE].fileSearch = Config::ESP_fileSearch;
 
-        printf("------------------------------------\n");
+        // printf("------------------------------------\n");
 
         LoadSnapshot(Config::ram_file,"","",0xff);
 

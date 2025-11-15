@@ -304,7 +304,7 @@ uint8_t rvmWD1793Read(rvmWD1793 *wd,uint8_t a);
 void rvmWD1793Step(rvmWD1793 *wd, uint32_t steps);
 void rvmWD1793Reset(rvmWD1793 *wd);
 bool rvmWD1793InsertDisk(rvmWD1793 *wd, unsigned char UnitNum, std::string Filename);
-uint8_t rvmwdDiskStep(rvmWD1793 *wd, uint32_t control);
+void/*uint8_t*/ rvmwdDiskStep(rvmWD1793 *wd, uint32_t control);
 void wdDiskEject(rvmWD1793 *wd, unsigned char UnitNum);
 void SCLtoTRD(rvmwdDisk *d, unsigned char* track0);
 
