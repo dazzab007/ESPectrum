@@ -260,7 +260,7 @@ void ShowStartMsg() {
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 
-    VIDEO::vga.clear(zxColor(7,0));
+    VIDEO::vga.clear(zxColor(0,0));
 
     // Disable StartMsg
     Config::StartMsg = false;

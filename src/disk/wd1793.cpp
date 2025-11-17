@@ -186,7 +186,20 @@ IRAM_ATTR void _do(rvmWD1793 *wd) {
 
         // printf("Seek track: %d side: %d\n", wd->track, wd->side);
 
-        rvmwdDiskStep(wd, wd->control & kRVMWD177XDire ? 0x100 : 0x300);
+        // Seek forward or backward
+        // { printf("--- Disk Seek Command ---\n");
+        // printf("Current track: %d\n", (int) disk->t);
+
+        if (wd->control & kRVMWD177XDire) {
+          if (wd->disk[wd->diskS]->t < wd->disk[wd->diskS]->tracks) wd->disk[wd->diskS]->t++;
+        } else {
+          if (wd->disk[wd->diskS]->t > 0) wd->disk[wd->diskS]->t--;
+        }
+
+        // printf("New track: %d\n", (int) disk->t);
+        // printf("-------------------------\n"); }
+
+        rvmwdDiskStep_read(wd);
 
         wd->led = 1; // RVM plays seek audio sample here
 
@@ -574,7 +587,14 @@ IRAM_ATTR void _do(rvmWD1793 *wd) {
 
       // Verificar underrun ANTES de procesar el byte
       if(wd->control & kRVMWD177XDRQ) {
-        printf("Lost data in write - aborting command\n");
+        // printf("Lost data in write - aborting command\n");
+
+        // Flush written data to disk
+        if (wd->disk[wd->diskS]->cursectbufpos < 0xff) {
+          fseek(wd->disk[wd->diskS]->Diskfile,-0x100,SEEK_CUR);
+          fwrite(wd->disk[wd->diskS]->cursectbuf,1,wd->disk[wd->diskS]->cursectbufpos,wd->disk[wd->diskS]->Diskfile);
+        }
+
         wd->status|=kRVMWD177XStatusLostData;
         wd->control&=~kRVMWD177XWriting;
         _end(wd);
@@ -770,7 +790,14 @@ IRAM_ATTR void _do(rvmWD1793 *wd) {
 
       // Verificar underrun ANTES de procesar
       if(wd->control & kRVMWD177XDRQ) {
-        printf("Lost data in write track - aborting command\n");
+        // printf("Lost data in write track - aborting command\n");
+
+        // Flush written data to disk
+        if (wd->disk[wd->diskS]->cursectbufpos < 0xff) {
+          fseek(wd->disk[wd->diskS]->Diskfile,-0x100,SEEK_CUR);
+          fwrite(wd->disk[wd->diskS]->cursectbuf,1,wd->disk[wd->diskS]->cursectbufpos,wd->disk[wd->diskS]->Diskfile);
+        }
+
         wd->status|=kRVMWD177XStatusLostData;
         wd->control&=~kRVMWD177XWriting;
         _end(wd);
@@ -949,25 +976,30 @@ IRAM_ATTR void _do(rvmWD1793 *wd) {
 
 IRAM_ATTR void rvmWD1793Step(rvmWD1793 *wd, uint32_t steps) {
 
-  for (;steps > 0; steps--) {
+  uint8_t dd = 0x0;
+  uint8_t s=0x0;
 
-    // uint8_t d=0x0;
-    uint8_t s=0x0;
-    uint8_t dd=0x0;
+  for (;steps; steps--) {
+
+    // uint8_t s=0x0;
+    // uint8_t dd=0x0;
 
     if(wd->disk[wd->diskS]) { // If active disk exists ..
 
-      // uint8_t t;
-      uint16_t w = 0;
+      // uint16_t w = 0;
+      // if((wd->control & kRVMWD177XWriting) && !wd->disk[wd->diskS]->writeprotect) {
+      //   w |= kRVMwdDiskControlWrite | wd->wb;
+      // }
+      // rvmwdDiskStep(wd, w);
 
       if((wd->control & kRVMWD177XWriting) && !wd->disk[wd->diskS]->writeprotect) {
-        w |= kRVMwdDiskControlWrite | wd->wb;
+        rvmwdDiskStep_write(wd, wd->wb);
+        dd = 0;
+      } else {
+        rvmwdDiskStep_read(wd);
+        dd = wd->disk[wd->diskS]->a;
       }
 
-      /*t = */rvmwdDiskStep(wd, w);
-
-      // d = t;
-      dd = wd->disk[wd->diskS]->a;
       s = wd->disk[wd->diskS]->s;
 
     }
@@ -1089,6 +1121,157 @@ IRAM_ATTR void rvmWD1793Step(rvmWD1793 *wd, uint32_t steps) {
         }
         break;
       }
+    }
+
+  }
+
+}
+
+IRAM_ATTR void rvmwdDiskStep_read(rvmWD1793 *wd) {
+
+  rvmwdDisk *disk = wd->disk[wd->diskS];
+
+  disk->a = 0;
+
+  disk->s = disk->t ? 0 : kRVMwdDiskOutTrack0;
+
+  if(disk->indexDelay) {
+    disk->indexDelay--;
+    disk->s |= kRVMwdDiskOutIndex;
+    return;
+  }
+
+  if (disk->cursectbufpos < 0xff) {
+    disk->cursectbufpos++;
+    disk->indx++;
+    disk->a = disk->cursectbuf[disk->cursectbufpos];
+    return;
+  }
+
+  if(disk->indx != 0xffffffff && disk->indx >= /*6417*/ 6663) {
+    disk->indx = 0xffffffff;
+    disk->cursectbufpos = 0xff;
+    disk->indexDelay = 25;
+    return;
+  }
+
+  disk->indx++;
+
+  const uint32_t cursect = (disk->indx - 146) / 392;
+
+  if (cursect < 16) {
+
+    if (disk->indx == sectdatapos[cursect]) { // Track in sector header
+      disk->a = (!disk->t && wd->side) ? disk->t0s1_info : disk->t;
+      return;
+    }
+
+    if (disk->indx == sectdatapos[cursect] + 44) { // Sector data
+
+      if ((disk->IsSCLFile) && (!disk->t) && (!wd->side)) {
+
+        // Create track0 from SCL file if not already done
+        if (!wd->sclConverted) {
+            SCLtoTRD(disk, wd->Track0);
+            wd->sclConverted = true;
+        }
+
+        // SCL disk -> Read sector to cache from created Track0
+        if (cursect < 9)
+          memcpy(disk->cursectbuf, wd->Track0 + (cursect << 8), 0x100);
+        else
+          memset(disk->cursectbuf, 0, 0x100);
+
+      } else {
+
+        const int seekptr = (disk->t << (11 + disk->sides)) + (wd->side << 12) + (cursect << 8) + disk->sclDataOffset;
+
+        fseek(disk->Diskfile,seekptr,SEEK_SET);
+        fread(disk->cursectbuf, 0x100, 1, disk->Diskfile);
+
+      }
+
+      disk->a = disk->cursectbuf[0];
+      disk->cursectbufpos = 0;
+
+      return;
+
+    }
+
+  }
+
+  disk->a = System34_track[disk->indx];
+
+}
+
+IRAM_ATTR void rvmwdDiskStep_write(rvmWD1793 *wd, uint8_t wbyte) {
+
+  rvmwdDisk *disk = wd->disk[wd->diskS];
+
+  disk->a = 0;
+
+  disk->s = disk->t ? 0 : kRVMwdDiskOutTrack0;
+
+  if(disk->indexDelay) {
+    disk->indexDelay--;
+    disk->s |= kRVMwdDiskOutIndex;
+    return;
+  }
+
+  if (disk->cursectbufpos < 0xff) {
+
+    disk->cursectbufpos++;
+
+    disk->cursectbuf[disk->cursectbufpos] = wbyte;
+
+    // Flush byte to disk
+    // fwrite(&wbyte,1,1,disk->Diskfile);
+
+    // Sector complete (flush to disk)
+    if (disk->cursectbufpos == 0xff) {
+      fseek(disk->Diskfile,-0x100,SEEK_CUR);
+      fwrite(disk->cursectbuf,1,0x100,disk->Diskfile);
+    }
+
+    disk->indx++;
+
+    return;
+
+  }
+
+  if(disk->indx != 0xffffffff && disk->indx >= /*6417*/ 6663) {
+    disk->indx = 0xffffffff;
+    disk->cursectbufpos = 0xff;
+    disk->indexDelay = 25;
+    return;
+  }
+
+  disk->indx++;
+
+  const uint32_t cursect = (disk->indx - 146) / 392;
+
+  if (cursect < 16) {
+
+    // if (disk->indx == sectdatapos[cursect]) { // Track in sector header
+
+    //   return;
+
+    // }
+
+    if (disk->indx == sectdatapos[cursect] + 44) { // Sector data
+
+      const int seekptr = (disk->t << (11 + disk->sides)) + (wd->side << 12) + (cursect << 8);
+
+      fseek(disk->Diskfile,seekptr,SEEK_SET);
+      fread(disk->cursectbuf, 0x100, 1, disk->Diskfile);
+
+      // fseek(disk->Diskfile,-0x100,SEEK_CUR); // fseek(disk->Diskfile,seekptr,SEEK_SET); <- What's faster ? SEEK_SET or SEEK_CUR with negative offset ?
+      // fwrite(&wbyte,1,1,disk->Diskfile);
+
+      disk->cursectbuf[0] = wbyte;
+
+      disk->cursectbufpos = 0;
+
     }
 
   }
@@ -1398,118 +1581,6 @@ bool rvmWD1793InsertDisk(rvmWD1793 *wd, unsigned char UnitNum, std::string Filen
     wd->disk[UnitNum]->fname = Filename;
 
     return true;
-
-}
-
-IRAM_ATTR void/*uint8_t*/ rvmwdDiskStep(rvmWD1793 *wd, uint32_t control) {
-
-  rvmwdDisk *disk = wd->disk[wd->diskS];
-  const uint32_t seek = control & 0x300;
-  disk->a = 0;
-
-  // Seek forward or backward
-  if (seek)
-    // { printf("--- Disk Seek Command ---\n");
-    // printf("Current track: %d\n", (int) disk->t);
-    disk->t = (seek == 0x300) ? disk->t - (disk->t != 0) : disk->t + (disk->t < disk->tracks);
-    // printf("New track: %d\n", (int) disk->t);
-    // printf("-------------------------\n"); }
-
-  disk->s = disk->t ? 0 : kRVMwdDiskOutTrack0;
-
-  if(disk->indexDelay) {
-    disk->indexDelay--;
-    disk->s |= kRVMwdDiskOutIndex;
-    return/* disk->s*/;
-  }
-
-  if (disk->cursectbufpos < 0xff) {
-
-    disk->cursectbufpos++;
-
-    disk->indx++;
-
-    if(control & kRVMwdDiskControlWrite) {
-      const uint8_t wr = control & 0xff;
-      fwrite(&wr,1,1,disk->Diskfile);
-      disk->cursectbuf[disk->cursectbufpos] = wr;
-      return/* 0*/;
-    }
-
-    disk->a = disk->cursectbuf[disk->cursectbufpos];
-    return/* disk->s*/;
-
-  } else {
-
-    if(disk->indx != 0xffffffff && disk->indx >= /*6417*/ 6663) {
-      disk->indx = 0xffffffff;
-      disk->cursectbufpos = 0xff;
-      disk->indexDelay = 25;
-      return/* disk->s*/;
-    }
-
-    disk->indx++;
-
-    const uint32_t cursect = (disk->indx - 146) / 392;
-
-    // const uint32_t cursect = System34_track_info[disk->indx];
-
-    if (cursect < 16) {
-
-      if (disk->indx == sectdatapos[cursect]) // Track in sector header
-        disk->a = (!disk->t && wd->side) ? disk->t0s1_info : disk->t;
-      else if (disk->indx == sectdatapos[cursect] + 44) { // Sector data
-
-        // const uint32_t side = (control & 0x800) << 1;
-
-        if ((disk->IsSCLFile) && (!disk->t) && (!wd->side)) {
-
-          // Create track0 from SCL file if not already done
-          if (!wd->sclConverted) {
-              SCLtoTRD(disk, wd->Track0);
-              wd->sclConverted = true;
-          }
-
-          // SCL disk -> Read sector to cache from created Track0
-          if (cursect < 9)
-            memcpy(disk->cursectbuf, wd->Track0 + (cursect << 8), 0x100);
-          else
-            memset(disk->cursectbuf, 0, 0x100);
-
-          disk->a = disk->cursectbuf[0];
-
-        } else {
-
-          const int seekptr = (disk->t << (11 + disk->sides)) + (wd->side << 12) + (cursect << 8) + disk->sclDataOffset;
-
-          fseek(disk->Diskfile,seekptr,SEEK_SET);
-          fread(disk->cursectbuf, 0x100, 1, disk->Diskfile);
-
-          if(control & kRVMwdDiskControlWrite) {
-            fseek(disk->Diskfile,seekptr,SEEK_SET);
-            uint8_t wr = control & 0xff;
-            fwrite(&wr,1,1,disk->Diskfile);
-            disk->cursectbuf[0] = wr;
-          } else {
-            disk->a = disk->cursectbuf[0];
-          }
-
-        }
-
-        disk->cursectbufpos = 0;
-
-      } else disk->a = System34_track[disk->indx];
-
-    } else disk->a = System34_track[disk->indx];
-
-    if(control & kRVMwdDiskControlWrite) {
-      disk->a = 0;
-      // return 0;
-    }
-
-    // return disk->s;
-
-  }
 
 }
 
